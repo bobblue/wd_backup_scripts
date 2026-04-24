@@ -28,6 +28,7 @@ S3_FORWARD_PORT=${S3_FORWARD_PORT:-39001}
 DISABLE_MC_MULTIPART=${DISABLE_MC_MULTIPART:-true}
 KEEP_SNAPSHOT=${KEEP_SNAPSHOT:-false}
 ELASTIC_SCHEMA_ONLY="${ELASTIC_SCHEMA_ONLY:-false}"
+ELASTIC_PVC_PREATTACHED="${ELASTIC_PVC_PREATTACHED:-false}"
 
 printUsage() {
   echo "Usage: $(basename ${0}) [command] [releaseName] [-f backupFile]"
@@ -40,29 +41,50 @@ get_recovery_status(){
 
 # Applies to: 4.7.0 <= WD_VERSION < 5.2.0.
 mount_pvc_to_elasitc() {
-  # Create shared PVC named as ELASTIC_SHARED_PVC if it's not defined or created
-  create_elastic_shared_pvc
-  # Verify PVC is Bound before proceeding; fail fast with diagnostics if not
-  for i in $(seq 1 12); do
-    pvc_status=$(oc ${OC_ARGS} get pvc "${ELASTIC_SHARED_PVC}" -o jsonpath='{.status.phase}')
-    [ "${pvc_status}" = "Bound" ] && break
-    if [ $i -eq 12 ]; then
-      brlog "ERROR" "PVC ${ELASTIC_SHARED_PVC} is not Bound (status: ${pvc_status}). Verify the storage class supports ReadWriteMany."
-      oc ${OC_ARGS} describe pvc "${ELASTIC_SHARED_PVC}" | grep -A10 "Events:" || true
+  if "${ELASTIC_PVC_PREATTACHED}" ; then
+    # Pre-attach mode: operator (WD) reconciliation is unreliable (e.g. CR stuck in updating),
+    # so the user has manually added the shared PVC volume/volumeMount to the Elasticsearch
+    # data StatefulSet. Skip create/patch/wait-for-mount; just sanity-check and proceed.
+    if [ -z "${ELASTIC_SHARED_PVC:-}" ] ; then
+      brlog "ERROR" "--elastic-pvc-preattached requires --elastic-shared-pvc (or ELASTIC_SHARED_PVC env var) to identify the pre-attached PVC."
       exit 1
     fi
-    brlog "INFO" "Waiting for PVC ${ELASTIC_SHARED_PVC} to be Bound (current: ${pvc_status})..."
-    sleep 5
-  done
-  # Mount the shared volume
-  oc ${OC_ARGS} patch wd "${TENANT_NAME}" --type merge --patch "{\"spec\": {\"elasticsearch\": {\"sharedStoragePvc\": \"${ELASTIC_SHARED_PVC}\"}}}"
-  ELASTIC_DATA_STS=$(oc ${OC_ARGS} get sts -l "icpdsupport/addOnId=discovery,icpdsupport/app=elastic,tenant=${TENANT_NAME},ibm-es-data=True" -o jsonpath='{.items[*].metadata.name}')
-  while :
-  do
-    test -n "$(oc ${OC_ARGS} get sts ${ELASTIC_DATA_STS} -o jsonpath="{..volumes[?(@.persistentVolumeClaim.claimName==\"${ELASTIC_SHARED_PVC}\")]}")" && break
-    brlog "INFO" "Wait for ElasticSearch to mount shared PVC"
-    sleep 30
-  done
+    brlog "INFO" "Pre-attach mode: skipping CR patch and mount-wait; using '${ELASTIC_SHARED_PVC}' already attached by the caller"
+    local pvc_status=$(oc ${OC_ARGS} get pvc "${ELASTIC_SHARED_PVC}" -o jsonpath='{.status.phase}')
+    if [ "${pvc_status}" != "Bound" ] ; then
+      brlog "ERROR" "PVC ${ELASTIC_SHARED_PVC} is not Bound (status: ${pvc_status}). Pre-attach mode requires the PVC to already be Bound."
+      exit 1
+    fi
+    ELASTIC_DATA_STS=$(oc ${OC_ARGS} get sts -l "icpdsupport/addOnId=discovery,icpdsupport/app=elastic,tenant=${TENANT_NAME},ibm-es-data=True" -o jsonpath='{.items[*].metadata.name}')
+    if [ -z "$(oc ${OC_ARGS} get sts ${ELASTIC_DATA_STS} -o jsonpath="{..volumes[?(@.persistentVolumeClaim.claimName==\"${ELASTIC_SHARED_PVC}\")]}")" ] ; then
+      brlog "ERROR" "StatefulSet ${ELASTIC_DATA_STS} does not reference PVC ${ELASTIC_SHARED_PVC} in its volumes. Attach it manually (volume + volumeMount at /workdir/shared_storage on the 'elasticsearch' container) before using --elastic-pvc-preattached."
+      exit 1
+    fi
+  else
+    # Create shared PVC named as ELASTIC_SHARED_PVC if it's not defined or created
+    create_elastic_shared_pvc
+    # Verify PVC is Bound before proceeding; fail fast with diagnostics if not
+    for i in $(seq 1 12); do
+      pvc_status=$(oc ${OC_ARGS} get pvc "${ELASTIC_SHARED_PVC}" -o jsonpath='{.status.phase}')
+      [ "${pvc_status}" = "Bound" ] && break
+      if [ $i -eq 12 ]; then
+        brlog "ERROR" "PVC ${ELASTIC_SHARED_PVC} is not Bound (status: ${pvc_status}). Verify the storage class supports ReadWriteMany."
+        oc ${OC_ARGS} describe pvc "${ELASTIC_SHARED_PVC}" | grep -A10 "Events:" || true
+        exit 1
+      fi
+      brlog "INFO" "Waiting for PVC ${ELASTIC_SHARED_PVC} to be Bound (current: ${pvc_status})..."
+      sleep 5
+    done
+    # Mount the shared volume
+    oc ${OC_ARGS} patch wd "${TENANT_NAME}" --type merge --patch "{\"spec\": {\"elasticsearch\": {\"sharedStoragePvc\": \"${ELASTIC_SHARED_PVC}\"}}}"
+    ELASTIC_DATA_STS=$(oc ${OC_ARGS} get sts -l "icpdsupport/addOnId=discovery,icpdsupport/app=elastic,tenant=${TENANT_NAME},ibm-es-data=True" -o jsonpath='{.items[*].metadata.name}')
+    while :
+    do
+      test -n "$(oc ${OC_ARGS} get sts ${ELASTIC_DATA_STS} -o jsonpath="{..volumes[?(@.persistentVolumeClaim.claimName==\"${ELASTIC_SHARED_PVC}\")]}")" && break
+      brlog "INFO" "Wait for ElasticSearch to mount shared PVC"
+      sleep 30
+    done
+  fi
 
   # Scaling down elastic search operator to edit configmap of Elastic
   brlog "INFO" "Scale down ElasticSearch operator"
@@ -240,29 +262,36 @@ function clean_up(){
       echo
     elif [ $(compare_version ${WD_VERSION} "5.2.0") -lt 0 ] ; then
       run_cmd_in_pod ${ELASTIC_POD} "rm -rf ${ELASTIC_REPO_LOCATION}/*" -c "${ELASTIC_POD_CONTAINER}"
-      oc ${OC_ARGS} patch wd "${TENANT_NAME}" --type json --patch "[{ \"op\": \"remove\", \"path\": \"/spec/elasticsearch/sharedStoragePvc\" }]"
-      while :
-      do
-        test -z "$(oc ${OC_ARGS} get elasticsearchcluster "${TENANT_NAME}" -o jsonpath='{.spec.sharedStoragePVC}')" && break
-        brlog "INFO" "Wait for sharedStoragePVC is set to None"
-        sleep 30
-      done
-      brlog "INFO" "Delete statefulset and job of ElasticSearch to rebuld them"
-      oc ${OC_ARGS} delete sts,job -l "icpdsupport/addOnId=discovery,icpdsupport/app=elastic,tenant=${TENANT_NAME}"
-      if [ "${ELASTIC_SHARED_PVC}" = "${ELASTIC_SHARED_PVC_DEFAULT_NAME:-}" ] ; then
-        brlog "INFO" "Delete PVC created for ElasticSearch: ${ELASTIC_SHARED_PVC_DEFAULT_NAME}"
-        oc ${OC_ARGS} delete pvc "${ELASTIC_SHARED_PVC_DEFAULT_NAME}"
+      if "${ELASTIC_PVC_PREATTACHED}" ; then
+        brlog "WARN" "Pre-attach mode: leaving '${TENANT_NAME}' CR and StatefulSet '${ELASTIC_DATA_STS}' untouched."
+        brlog "WARN" "Manually detach the shared PVC volume/volumeMount from the StatefulSet once operator reconciliation is healthy again."
+        oc ${OC_ARGS} scale deploy -n ${ELASTIC_OPERATOR_DEPLOY[0]} ${ELASTIC_OPERATOR_DEPLOY[1]} --replicas=1
+        trap_remove "oc ${OC_ARGS} scale deploy -n ${ELASTIC_OPERATOR_DEPLOY[0]} ${ELASTIC_OPERATOR_DEPLOY[1]} --replicas=1"
+      else
+        oc ${OC_ARGS} patch wd "${TENANT_NAME}" --type json --patch "[{ \"op\": \"remove\", \"path\": \"/spec/elasticsearch/sharedStoragePvc\" }]"
+        while :
+        do
+          test -z "$(oc ${OC_ARGS} get elasticsearchcluster "${TENANT_NAME}" -o jsonpath='{.spec.sharedStoragePVC}')" && break
+          brlog "INFO" "Wait for sharedStoragePVC is set to None"
+          sleep 30
+        done
+        brlog "INFO" "Delete statefulset and job of ElasticSearch to rebuld them"
+        oc ${OC_ARGS} delete sts,job -l "icpdsupport/addOnId=discovery,icpdsupport/app=elastic,tenant=${TENANT_NAME}"
+        if [ "${ELASTIC_SHARED_PVC}" = "${ELASTIC_SHARED_PVC_DEFAULT_NAME:-}" ] ; then
+          brlog "INFO" "Delete PVC created for ElasticSearch: ${ELASTIC_SHARED_PVC_DEFAULT_NAME}"
+          oc ${OC_ARGS} delete pvc "${ELASTIC_SHARED_PVC_DEFAULT_NAME}"
+        fi
+        oc ${OC_ARGS} scale deploy -n ${ELASTIC_OPERATOR_DEPLOY[0]} ${ELASTIC_OPERATOR_DEPLOY[1]} --replicas=1
+        trap_remove "oc ${OC_ARGS} scale deploy -n ${ELASTIC_OPERATOR_DEPLOY[0]} ${ELASTIC_OPERATOR_DEPLOY[1]} --replicas=1"
+        brlog "INFO" "Waiting for ElasticSearch pod start up"
+        while :
+        do
+          oc ${OC_ARGS} get sts "${ELASTIC_DATA_STS}" &> /dev/null && break
+          brlog "INFO" "Wait for ElasticSearch statefulset"
+          sleep 30
+        done
+        oc ${OC_ARGS} rollout status sts "${ELASTIC_DATA_STS}"
       fi
-      oc ${OC_ARGS} scale deploy -n ${ELASTIC_OPERATOR_DEPLOY[0]} ${ELASTIC_OPERATOR_DEPLOY[1]} --replicas=1
-      trap_remove "oc ${OC_ARGS} scale deploy -n ${ELASTIC_OPERATOR_DEPLOY[0]} ${ELASTIC_OPERATOR_DEPLOY[1]} --replicas=1"
-      brlog "INFO" "Waiting for ElasticSearch pod start up"
-      while :
-      do
-        oc ${OC_ARGS} get sts "${ELASTIC_DATA_STS}" &> /dev/null && break
-        brlog "INFO" "Wait for ElasticSearch statefulset"
-        sleep 30
-      done
-      oc ${OC_ARGS} rollout status sts "${ELASTIC_DATA_STS}"
     fi
   fi
 }

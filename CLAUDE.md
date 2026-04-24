@@ -32,6 +32,12 @@ The caller's machine needs: `bash`, `oc` (OpenShift CLI and an active session), 
 # cluster operational; collections become searchable again after re-ingesting from source.
 ./all-backup-restore.sh backup --elastic-schema-only
 
+# Escape hatch for WD 4.7.0 <= ver < 5.2.0 when the WD operator can't reconcile
+# 'wd.spec.elasticsearch.sharedStoragePvc' (e.g. CR stuck in Updating). Caller must manually
+# attach the PVC (volume + volumeMount at /workdir/shared_storage on the 'elasticsearch'
+# container) to the elastic data StatefulSet before running, and detach it after.
+./all-backup-restore.sh backup --elastic-shared-pvc my-rwx-pvc --elastic-pvc-preattached
+
 # Run a single component against a tenant (same shape for wddata/etcd/postgresql/elastic/minio)
 ./elastic-backup-restore.sh backup  TENANT -f elastic.backup
 ./elastic-backup-restore.sh restore TENANT -f elastic.backup
@@ -53,7 +59,7 @@ The caller's machine needs: `bash`, `oc` (OpenShift CLI and an active session), 
 ./wks2wd.sh --inspect types.json corpus.zip     # WKS type converter (Node.js)
 ```
 
-Key environment variables (in addition to `--flags`): `OC_ARGS`, `WD_VERSION` (skip auto-detection), `BACKUP_RESTORE_LOG_LEVEL` (`ERROR|WARN|INFO|DEBUG`), `BACKUP_RESTORE_LOG_DIR`, `BACKUP_RESTORE_IN_POD=true` (same as `--use-job`), `TMP_PVC_NAME`, `ELASTIC_SHARED_PVC`, `FILE_STORAGE_CLASS`, `SKIP_QUIESCE`, `SKIP_COMPONENTS` (space-separated; mirror of `--skip-components`), `CLEAN`.
+Key environment variables (in addition to `--flags`): `OC_ARGS`, `WD_VERSION` (skip auto-detection), `BACKUP_RESTORE_LOG_LEVEL` (`ERROR|WARN|INFO|DEBUG`), `BACKUP_RESTORE_LOG_DIR`, `BACKUP_RESTORE_IN_POD=true` (same as `--use-job`), `TMP_PVC_NAME`, `ELASTIC_SHARED_PVC`, `ELASTIC_PVC_PREATTACHED=true` (mirror of `--elastic-pvc-preattached`), `FILE_STORAGE_CLASS`, `SKIP_QUIESCE`, `SKIP_COMPONENTS` (space-separated; mirror of `--skip-components`), `CLEAN`.
 
 ## Architecture
 

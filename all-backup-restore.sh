@@ -58,6 +58,13 @@ Basically, you don't need these advanced options.
     --elastic-schema-only                      Back up/restore only ElasticSearch index schema (mappings+settings), not document data.
                                                The cluster is fully operational after restore; collections become searchable again
                                                after re-ingesting content (documents remain in MinIO/source systems).
+    --elastic-pvc-preattached                  (WD 4.7.0 <= ver < 5.2.0 only) Skip patching wd.spec.elasticsearch.sharedStoragePvc
+                                               and skip the wait-for-mount loop. Assume the caller has already attached the PVC
+                                               named by --elastic-shared-pvc to the elastic data StatefulSet as a volume named
+                                               'shared-storage' with volumeMount path /workdir/shared_storage on the 'elasticsearch'
+                                               container. Use when the WD operator cannot reconcile sharedStoragePvc (e.g. the
+                                               'wd' CR is stuck in an Updating state). You must detach it manually after completion.
+                                               Requires --elastic-shared-pvc.
 EOF
 }
 
@@ -271,6 +278,9 @@ do
       ;;
     --elastic-schema-only)
       export ELASTIC_SCHEMA_ONLY=true
+      ;;
+    --elastic-pvc-preattached)
+      export ELASTIC_PVC_PREATTACHED=true
       ;;
     --skip-components)
       if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]]; then
