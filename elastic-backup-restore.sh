@@ -88,8 +88,18 @@ mount_pvc_to_elasitc() {
 
   # Scaling down elastic search operator to edit configmap of Elastic
   brlog "INFO" "Scale down ElasticSearch operator"
-  ELASTIC_VERSION=$(oc ${OC_ARGS} get elasticsearchcluster "${TENANT_NAME}" -o jsonpath='{.status.version}')
-  ELASTIC_OPERATOR_DEPLOY=( $(oc get deploy -A -l "olm.owner=ibm-elasticsearch-operator.v${ELASTIC_VERSION}" | tail -n1 | awk '{print $1,$2}') )
+  if [ -n "${ELASTIC_OPERATOR_NAMESPACE:-}" ] && [ -n "${ELASTIC_OPERATOR_DEPLOY_NAME:-}" ] ; then
+    ELASTIC_OPERATOR_DEPLOY=( "${ELASTIC_OPERATOR_NAMESPACE}" "${ELASTIC_OPERATOR_DEPLOY_NAME}" )
+  else
+    ELASTIC_VERSION=$(oc ${OC_ARGS} get elasticsearchcluster "${TENANT_NAME}" -o jsonpath='{.status.version}')
+    ELASTIC_OPERATOR_DEPLOY=( $(oc get deploy -A -l "olm.owner=ibm-elasticsearch-operator.v${ELASTIC_VERSION}" | tail -n1 | awk '{print $1,$2}') )
+    if [ "${#ELASTIC_OPERATOR_DEPLOY[@]}" -lt 2 ] ; then
+      brlog "ERROR" "Could not auto-detect the ElasticSearch operator deployment (elasticsearchcluster/${TENANT_NAME} .status.version='${ELASTIC_VERSION}')."
+      brlog "ERROR" "Set ELASTIC_OPERATOR_NAMESPACE and ELASTIC_OPERATOR_DEPLOY_NAME env vars to the operator's namespace and deployment name, then retry."
+      brlog "ERROR" "Find them with: oc get deploy -A | grep -i elasticsearch-operator"
+      exit 1
+    fi
+  fi
   oc ${OC_ARGS} scale deploy -n "${ELASTIC_OPERATOR_DEPLOY[0]}" "${ELASTIC_OPERATOR_DEPLOY[1]}" --replicas=0
   trap_add "oc ${OC_ARGS} scale deploy -n ${ELASTIC_OPERATOR_DEPLOY[0]} ${ELASTIC_OPERATOR_DEPLOY[1]} --replicas=1"
   sleep 30

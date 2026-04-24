@@ -59,7 +59,7 @@ The caller's machine needs: `bash`, `oc` (OpenShift CLI and an active session), 
 ./wks2wd.sh --inspect types.json corpus.zip     # WKS type converter (Node.js)
 ```
 
-Key environment variables (in addition to `--flags`): `OC_ARGS`, `WD_VERSION` (skip auto-detection), `BACKUP_RESTORE_LOG_LEVEL` (`ERROR|WARN|INFO|DEBUG`), `BACKUP_RESTORE_LOG_DIR`, `BACKUP_RESTORE_IN_POD=true` (same as `--use-job`), `TMP_PVC_NAME`, `ELASTIC_SHARED_PVC`, `ELASTIC_PVC_PREATTACHED=true` (mirror of `--elastic-pvc-preattached`), `FILE_STORAGE_CLASS`, `SKIP_QUIESCE`, `SKIP_COMPONENTS` (space-separated; mirror of `--skip-components`), `CLEAN`.
+Key environment variables (in addition to `--flags`): `OC_ARGS`, `WD_VERSION` (skip auto-detection), `BACKUP_RESTORE_LOG_LEVEL` (`ERROR|WARN|INFO|DEBUG`), `BACKUP_RESTORE_LOG_DIR`, `BACKUP_RESTORE_IN_POD=true` (same as `--use-job`), `TMP_PVC_NAME`, `ELASTIC_SHARED_PVC`, `ELASTIC_PVC_PREATTACHED=true` (mirror of `--elastic-pvc-preattached`), `ELASTIC_OPERATOR_NAMESPACE` / `ELASTIC_OPERATOR_DEPLOY_NAME` (override auto-detection of the ElasticSearch operator deployment when the `olm.owner=ibm-elasticsearch-operator.v*` label doesn't match), `FILE_STORAGE_CLASS`, `SKIP_QUIESCE`, `SKIP_COMPONENTS` (space-separated; mirror of `--skip-components`), `CLEAN`.
 
 ## Architecture
 
