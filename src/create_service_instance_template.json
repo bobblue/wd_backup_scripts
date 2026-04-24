@@ -1,0 +1,8 @@
+{
+  "name": "#display_name#",
+  "deployment_id": "#namespace#-#instance#",
+  "url": "https://#instance#-discovery-gateway.#namespace#.svc.cluster.local:60443/v2/service_instances",
+  "description": "",
+  "type": "discovery",
+  "version": "#version#"
+}
