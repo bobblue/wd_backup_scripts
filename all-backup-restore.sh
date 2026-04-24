@@ -408,7 +408,7 @@ brlog "INFO" "Component log directory: ${BACKUP_RESTORE_LOG_DIR}"
 
 CURRENT_COMPONENT="pre-process"
 check_datastore_available
-if ! is_component_skipped elastic ; then
+if ! is_component_skipped elastic && ! "${ELASTIC_PVC_PREATTACHED:-false}" ; then
   create_elastic_shared_pvc
 fi
 

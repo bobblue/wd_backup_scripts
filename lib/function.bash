@@ -1897,14 +1897,14 @@ create_elastic_shared_pvc(){
   if [ $(compare_version "${wd_version}" "4.7.0") -ge 0 ] ; then
     # shared volume should be RWX
     if [ -n "${TMP_PVC_NAME:+UNDEF}" ] ; then
-      if oc ${OC_ARGS} get pvc "${TMP_PVC_NAME}" -o jsonpath='{.spec.}' | grep "ReadWriteMany" > /dev/null ; then
+      if oc ${OC_ARGS} get pvc "${TMP_PVC_NAME}" -o jsonpath='{.spec.accessModes}' | grep "ReadWriteMany" > /dev/null ; then
         ELASTIC_SHARED_PVC=${TMP_PVC_NAME}
       else
         brlog "INFO" "${TMP_PVC_NAME} is not RWX storage class. Don't use it for backup of ElasticSearch"
       fi
     fi
     if [ -n "${ELASTIC_SHARED_PVC:+UNDEF}" ] ; then
-      if ! oc ${OC_ARGS} get pvc "${ELASTIC_SHARED_PVC}" -o jsonpath='{.spec.}' | grep "ReadWriteMany" > /dev/null ; then
+      if ! oc ${OC_ARGS} get pvc "${ELASTIC_SHARED_PVC}" -o jsonpath='{.spec.accessModes}' | grep "ReadWriteMany" > /dev/null ; then
         brlog "ERROR" "PVC for backup/restore for ElasticSearch should be RWX: ${ELASTIC_SHARED_PVC}"
         exit 1
       fi
