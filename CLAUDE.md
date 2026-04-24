@@ -22,6 +22,16 @@ The caller's machine needs: `bash`, `oc` (OpenShift CLI and an active session), 
 # Resume after a failure mid-run; values: wddata|etcd|postgresql|elastic|minio|archive|migration|post-restore
 ./all-backup-restore.sh restore -f FILE --continue-from elastic
 
+# Skip components to produce a partial (INCOMPLETE) backup/restore — caller must recover the
+# skipped state manually (e.g. reindex Elastic from PG+MinIO). Must be used symmetrically on both
+# backup and restore so the orchestrator doesn't look for a missing tmp/<component>.backup.
+./all-backup-restore.sh backup  -n NS --skip-components elastic
+./all-backup-restore.sh restore -f FILE --skip-components elastic
+
+# Back up only the Elasticsearch schema (mappings+settings), not documents. Restore leaves the
+# cluster operational; collections become searchable again after re-ingesting from source.
+./all-backup-restore.sh backup --elastic-schema-only
+
 # Run a single component against a tenant (same shape for wddata/etcd/postgresql/elastic/minio)
 ./elastic-backup-restore.sh backup  TENANT -f elastic.backup
 ./elastic-backup-restore.sh restore TENANT -f elastic.backup
@@ -38,11 +48,12 @@ The caller's machine needs: `bash`, `oc` (OpenShift CLI and an active session), 
 ./post-restore.sh TENANT                        # runs automatically at end of restore
 ./run-migrator.sh TENANT                        # launches the wd-migrator job
 ./run-postgres-config-job.sh TENANT             # re-applies the configure-postgres job
+./mt-migration-size-estimator.sh -n NS          # estimates PG storage headroom needed during MT migration
 ./openshiftCollector_4.0.0.sh                   # dumps OpenShift diag bundle
 ./wks2wd.sh --inspect types.json corpus.zip     # WKS type converter (Node.js)
 ```
 
-Key environment variables (in addition to `--flags`): `OC_ARGS`, `WD_VERSION` (skip auto-detection), `BACKUP_RESTORE_LOG_LEVEL` (`ERROR|WARN|INFO|DEBUG`), `BACKUP_RESTORE_LOG_DIR`, `BACKUP_RESTORE_IN_POD=true` (same as `--use-job`), `TMP_PVC_NAME`, `ELASTIC_SHARED_PVC`, `FILE_STORAGE_CLASS`, `SKIP_QUIESCE`, `CLEAN`.
+Key environment variables (in addition to `--flags`): `OC_ARGS`, `WD_VERSION` (skip auto-detection), `BACKUP_RESTORE_LOG_LEVEL` (`ERROR|WARN|INFO|DEBUG`), `BACKUP_RESTORE_LOG_DIR`, `BACKUP_RESTORE_IN_POD=true` (same as `--use-job`), `TMP_PVC_NAME`, `ELASTIC_SHARED_PVC`, `FILE_STORAGE_CLASS`, `SKIP_QUIESCE`, `SKIP_COMPONENTS` (space-separated; mirror of `--skip-components`), `CLEAN`.
 
 ## Architecture
 
